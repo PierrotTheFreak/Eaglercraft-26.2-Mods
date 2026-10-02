@@ -53,7 +53,29 @@ public final class AvatarLoader {
             if (model.part(parent) == null) parent = "root";
             FiguraModelPart created = model.createPart(name, parent);
             created.visible(!part.has("visible") || part.get("visible").getAsBoolean());
+            JsonElement cubes = part.get("cubes");
+            if (cubes != null && cubes.isJsonArray()) {
+                for (JsonElement cubeElement : cubes.getAsJsonArray()) {
+                    if (!cubeElement.isJsonObject()) continue;
+                    JsonObject cube = cubeElement.getAsJsonObject();
+                    created.addCube(new net.Figura.model.FiguraCube(
+                        number(cube, "x", 0), number(cube, "y", 0), number(cube, "z", 0),
+                        number(cube, "width", 1), number(cube, "height", 1), number(cube, "depth", 1),
+                        integer(cube, "u", 0), integer(cube, "v", 0), number(cube, "grow", 0),
+                        cube.has("mirror") && cube.get("mirror").getAsBoolean()));
+                }
+            }
         }
+    }
+
+    private static float number(JsonObject object, String key, float fallback) {
+        JsonElement value = object.get(key);
+        return value != null && value.isJsonPrimitive() ? value.getAsFloat() : fallback;
+    }
+
+    private static int integer(JsonObject object, String key, int fallback) {
+        JsonElement value = object.get(key);
+        return value != null && value.isJsonPrimitive() ? value.getAsInt() : fallback;
     }
 
     private static String string(JsonObject object, String key, String fallback) {
