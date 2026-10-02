@@ -184,6 +184,7 @@ public class AvatarRenderer<AvatarlikeEntity extends Avatar & ClientAvatarEntity
       state.parrotOnLeftShoulder = entity.getParrotVariantOnShoulder(true);
       state.parrotOnRightShoulder = entity.getParrotVariantOnShoulder(false);
       state.id = entity.getId();
+      state.figuraOwner = entity.getUUID();
       state.showExtraEars = entity.showExtraEars();
       state.heldOnHead.clear();
       if (state.isUsingItem) {
