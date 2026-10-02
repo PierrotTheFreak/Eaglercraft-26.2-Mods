@@ -2,6 +2,8 @@ name: CompileHtml
 
 on:
   push:
+    paths-ignore:
+      - 'output/**'
   workflow_dispatch:
 
 permissions:
@@ -35,61 +37,104 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Generate every EPK first
+      - name: Generate production assets EPK
         shell: bash
         run: |
           set -euo pipefail
-          # The repository's production asset EPK task lives in the desktop
-          # target because it invokes EPKPackagerMain against game resources.
           ./gradlew :target_lwjgl_desktop:buildAssetsEPK --console=plain --no-daemon
+          EPK="$(find target_lwjgl_desktop/build -type f -name 'assets.epk' -print -quit)"
+          if [ -z "$EPK" ]; then
+            echo "::error::buildAssetsEPK completed but no assets.epk was produced"
+            find . -type f -name '*.epk' -not -path './.git/*' -print | sort
+            exit 1
+          fi
+          echo "EPK=$EPK" >> "$GITHUB_ENV"
 
-      - name: Compile web client
+      - name: Compile TeaVM JavaScript client
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew :target_teavm:generateJavaScript :target_teavm_wasm_gc:generateWasmGC --console=plain --no-daemon
+          ./gradlew :target_teavm:generateJavaScript --console=plain --no-daemon
+          JS="$(find target_teavm/build -type f -name 'classes.js' -print -quit)"
+          if [ -z "$JS" ]; then
+            echo "::error::generateJavaScript completed but no classes.js was produced"
+            find target_teavm/build -type f | sort | head -300
+            exit 1
+          fi
+          echo "TEAVM_JS=$JS" >> "$GITHUB_ENV"
 
-      - name: Collect compiled HTML
+      - name: Compile TeaVM WASM-GC client
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :target_teavm_wasm_gc:generateWasmGC --console=plain --no-daemon
+          WASM="$(find target_teavm_wasm_gc/build -type f -name 'classes.wasm' -print -quit)"
+          if [ -n "$WASM" ]; then
+            echo "TEAVM_WASM=$WASM" >> "$GITHUB_ENV"
+            echo "WASM-GC output: $WASM"
+          else
+            echo "WASM-GC task completed without classes.wasm; continuing with JS."
+          fi
+
+      - name: Assemble browser client
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p output
+          cp "$TEAVM_JS" "output/$BRANCH_NAME.js"
+          cp "$EPK" "output/$BRANCH_NAME.epk"
 
-          # Prefer an HTML produced by the repository's build tooling.
-          mapfile -t HTML_FILES < <(
-            find . -type f -name '*.html' \
-              -not -path './.git/*' \
-              -not -path './output/*' \
-              -print | sort
-          )
-
-          if [ "${#HTML_FILES[@]}" -eq 0 ]; then
-            echo "The web link completed, but no HTML file was produced by the repository build."
-            echo "Generated web artifacts:"
-            find . -type f \\( -name '*.js' -o -name '*.wasm' -o -name '*.epk' \\) \
-              -not -path './.git/*' -print | sort | head -200
-            exit 1
+          if [ -n "${TEAVM_WASM:-}" ]; then
+            cp "$TEAVM_WASM" "output/$BRANCH_NAME.wasm"
           fi
 
-          # If multiple HTML files exist, use the most recently modified one.
-          SOURCE_HTML="$(ls -1t "${HTML_FILES[@]}" | head -n 1)"
-          cp "$SOURCE_HTML" "output/${BRANCH_NAME}.html"
-          echo "Published HTML source: $SOURCE_HTML"
-          echo "Output: output/${BRANCH_NAME}.html"
+          cat > "output/$BRANCH_NAME.html" <<'HTML'
+          <!DOCTYPE html>
+          <html lang="en" style="width:100%;height:100%;background:#000;">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="description" content="Eaglercraft 26.2">
+            <title>Eaglercraft 26.2</title>
+            <script type="text/javascript" src="__BRANCH__.js"></script>
+            <script type="text/javascript">
+              window.addEventListener("load", function() {
+                if (document.location.href.startsWith("file:")) {
+                  alert("HTTP is required. Run this client through an HTTP server.");
+                  return;
+                }
+                window.eaglercraftXOpts = {
+                  container: "game_frame",
+                  assetsURI: "__BRANCH__.epk",
+                  localesURI: "lang/",
+                  worldsDB: "worlds"
+                };
+                main();
+              });
+            </script>
+          </head>
+          <body style="margin:0;width:100vw;height:100vh;overflow:hidden;" id="game_frame"></body>
+          </html>
+          HTML
 
-      - name: Commit compiled HTML
+          sed -i "s/__BRANCH__/$BRANCH_NAME/g" "output/$BRANCH_NAME.html"
+
+          echo "Built browser client:"
+          ls -lh "output/$BRANCH_NAME.html" "output/$BRANCH_NAME.js" "output/$BRANCH_NAME.epk"
+          if [ -f "output/$BRANCH_NAME.wasm" ]; then
+            ls -lh "output/$BRANCH_NAME.wasm"
+          fi
+
+      - name: Commit browser build
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add "output/${BRANCH_NAME}.html"
-
+          git add "output/$BRANCH_NAME.html" "output/$BRANCH_NAME.js" "output/$BRANCH_NAME.epk" "output/$BRANCH_NAME.wasm" 2>/dev/null || true
           if git diff --cached --quiet; then
-            echo "HTML is unchanged; nothing to commit."
+            echo "Browser build is unchanged; nothing to commit."
             exit 0
           fi
-
-          git commit -m "Build ${BRANCH_NAME} HTML"
-          git push origin "HEAD:${BRANCH_NAME}"
+          git commit -m "Build $BRANCH_NAME browser client"
+          git push origin "HEAD:$BRANCH_NAME"
