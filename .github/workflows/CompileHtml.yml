@@ -1,0 +1,107 @@
+name: CompileHtml
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compile-html-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  compile-html:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GRADLE_OPTS: "-Xms4g -Xmx15g -XX:MaxMetaspaceSize=2g -XX:+UseG1GC"
+      JAVA_TOOL_OPTIONS: "-Xms4g -Xmx15g -XX:MaxMetaspaceSize=2g -XX:+UseG1GC"
+      BRANCH_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Generate every EPK first
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t EPK_TASKS < <(
+            ./gradlew tasks --all --console=plain |
+              grep -E '^[[:space:]]*[A-Za-z0-9_:-]*EPK[A-Za-z0-9_:-]*[[:space:]]' |
+              awk '{print $1}' |
+              grep ':' |
+              sort -u
+          )
+
+          if [ "${#EPK_TASKS[@]}" -eq 0 ]; then
+            echo "No EPK Gradle tasks were discovered."
+            exit 1
+          fi
+
+          printf 'EPK tasks: %s\\n' "${EPK_TASKS[@]}"
+          ./gradlew "${EPK_TASKS[@]}" --console=plain --no-daemon
+
+      - name: Compile web client
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :target_teavm:generateJavaScript :target_teavm_wasm_gc:generateWasmGC --console=plain --no-daemon
+
+      - name: Collect compiled HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+
+          # Prefer an HTML produced by the repository's build tooling.
+          mapfile -t HTML_FILES < <(
+            find . -type f -name '*.html' \
+              -not -path './.git/*' \
+              -not -path './output/*' \
+              -print | sort
+          )
+
+          if [ "${#HTML_FILES[@]}" -eq 0 ]; then
+            echo "The web link completed, but no HTML file was produced by the repository build."
+            echo "Generated web artifacts:"
+            find . -type f \\( -name '*.js' -o -name '*.wasm' -o -name '*.epk' \\) \
+              -not -path './.git/*' -print | sort | head -200
+            exit 1
+          fi
+
+          # If multiple HTML files exist, use the most recently modified one.
+          SOURCE_HTML="$(ls -1t "${HTML_FILES[@]}" | head -n 1)"
+          cp "$SOURCE_HTML" "output/${BRANCH_NAME}.html"
+          echo "Published HTML source: $SOURCE_HTML"
+          echo "Output: output/${BRANCH_NAME}.html"
+
+      - name: Commit compiled HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "output/${BRANCH_NAME}.html"
+
+          if git diff --cached --quiet; then
+            echo "HTML is unchanged; nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "Build ${BRANCH_NAME} HTML"
+          git push origin "HEAD:${BRANCH_NAME}"
