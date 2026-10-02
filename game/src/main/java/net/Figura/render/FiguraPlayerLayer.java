@@ -12,6 +12,7 @@ import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.resources.Identifier;
 
 /** Submits Figura geometry through the native 26.2 feature/render pipeline. */
 public final class FiguraPlayerLayer extends RenderLayer<AvatarRenderState, PlayerModel> {
@@ -27,8 +28,13 @@ public final class FiguraPlayerLayer extends RenderLayer<AvatarRenderState, Play
                        AvatarRenderState state, float limbAngle, float limbDistance) {
         Avatar avatar = avatars.get(state.figuraOwner);
         if (avatar == null || avatar.state() != AvatarState.LOADED) return;
+
+        Identifier texture = FiguraTextureRegistry.getOrCreate(avatar);
+        if (texture == null) texture = state.skin.body().texturePath();
+
         var part = FiguraModelPartAdapter.bake(avatar.model());
-        collector.submitModelPart(part, poseStack, RenderTypes.entityTranslucent(state.skin.body().texturePath()),
-            lightCoords, OverlayTexture.NO_OVERLAY, null);
+        collector.submitModelPart(
+                part, poseStack, RenderTypes.entityTranslucent(texture),
+                lightCoords, OverlayTexture.NO_OVERLAY, null);
     }
 }
