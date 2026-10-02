@@ -1,6 +1,8 @@
 package net.Figura.avatar;
 
 import java.util.UUID;
+import net.Figura.animation.AnimationPlayer;
+import net.Figura.lua.FiguraLuaRuntime;
 import net.Figura.model.FiguraModel;
 import net.Figura.permissions.PermissionSet;
 
@@ -10,6 +12,8 @@ public final class Avatar {
     private final FiguraModel model;
     private final PermissionSet permissions;
     private final AvatarMetadata metadata;
+    private final AnimationPlayer animations = new AnimationPlayer();
+    private final FiguraLuaRuntime lua = new FiguraLuaRuntime();
     private AvatarState state = AvatarState.UNLOADED;
     private int tick;
 
@@ -24,16 +28,19 @@ public final class Avatar {
     public FiguraModel model() { return model; }
     public PermissionSet permissions() { return permissions; }
     public AvatarMetadata metadata() { return metadata; }
+    public AnimationPlayer animations() { return animations; }
+    public FiguraLuaRuntime lua() { return lua; }
     public AvatarState state() { return state; }
     public int tickCount() { return tick; }
 
     public void load() { state = AvatarState.LOADED; }
-    public void unload() { state = AvatarState.UNLOADED; }
+    public void unload() { state = AvatarState.UNLOADED; lua.clear(); }
     public void fail() { state = AvatarState.ERROR; }
 
     public void tick() {
         if (state != AvatarState.LOADED) return;
         tick++;
+        animations.tick(1f);
         model.tick(tick);
     }
 }
