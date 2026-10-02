@@ -23,7 +23,7 @@ public final class AvatarLoader {
         permissions.allow(Permission.TICK);
         permissions.allow(Permission.SCRIPT);
         FiguraModel model = BlockbenchAvatarLoader.load(bundle.resources());
-        Avatar avatar = new Avatar(owner, bundle.metadata(), model, permissions);
+        Avatar avatar = new Avatar(owner, bundle.metadata(), model, permissions, bundle.resources());
         avatar.load();
         return avatar;
     }
