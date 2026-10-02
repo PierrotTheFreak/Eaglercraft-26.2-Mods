@@ -38,7 +38,7 @@ public final class BlockbenchModelLoader {
 
         JsonArray outliner = root.getAsJsonArray("outliner");
         if (outliner != null) {
-            parseOutliner(outliner, target, modelRoot.name(), nodes, cubes,
+            parseOutliner(outliner, root, target, modelRoot.name(), nodes, cubes,
                     new HashSet<>());
         }
 
@@ -73,6 +73,7 @@ public final class BlockbenchModelLoader {
 
     private static void parseOutliner(
             JsonArray array,
+            JsonObject root,
             FiguraModel target,
             String parent,
             Map<String, JsonObject> nodes,
@@ -85,21 +86,22 @@ public final class BlockbenchModelLoader {
 
                 JsonObject node = nodes.get(uuid);
                 if (node != null) {
-                    parseNode(node, target, parent, nodes, cubes, visited);
+                    parseNode(node, root, target, parent, nodes, cubes, visited);
                 } else {
                     JsonObject cube = cubes.get(uuid);
-                    if (cube != null) addCube(target.part(parent), cube, textureSize(null, cube));
+                    if (cube != null) addCube(target.part(parent), cube, textureSize(root, cube));
                 }
                 continue;
             }
 
             if (!element.isJsonObject()) continue;
-            parseNode(element.getAsJsonObject(), target, parent, nodes, cubes, visited);
+            parseNode(element.getAsJsonObject(), root, target, parent, nodes, cubes, visited);
         }
     }
 
     private static void parseNode(
             JsonObject node,
+            JsonObject root,
             FiguraModel target,
             String parent,
             Map<String, JsonObject> nodes,
@@ -112,7 +114,7 @@ public final class BlockbenchModelLoader {
         boolean cube = node.has("from") && node.has("to");
         if (cube) {
             FiguraModelPart owner = target.part(parent);
-            if (owner != null) addCube(owner, node, textureSize(null, node));
+            if (owner != null) addCube(owner, node, textureSize(root, node));
             return;
         }
 
@@ -135,13 +137,13 @@ public final class BlockbenchModelLoader {
 
                 JsonObject childNode = nodes.get(childUuid);
                 if (childNode != null) {
-                    parseNode(childNode, target, partName, nodes, cubes, visited);
+                    parseNode(childNode, root, target, partName, nodes, cubes, visited);
                     continue;
                 }
 
                 JsonObject childCube = cubes.get(childUuid);
                 if (childCube != null) {
-                    addCube(target.part(partName), childCube, textureSize(null, childCube));
+                    addCube(target.part(partName), childCube, textureSize(root, childCube));
                 }
             } else if (child.isJsonObject()) {
                 parseNode(child.getAsJsonObject(), target, partName, nodes, cubes, visited);
