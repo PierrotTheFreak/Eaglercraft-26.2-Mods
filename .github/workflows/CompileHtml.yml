@@ -39,21 +39,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t EPK_TASKS < <(
-            ./gradlew tasks --all --console=plain |
-              grep -E '^[[:space:]]*[A-Za-z0-9_:-]*EPK[A-Za-z0-9_:-]*[[:space:]]' |
-              awk '{print $1}' |
-              grep ':' |
-              sort -u
-          )
-
-          if [ "${#EPK_TASKS[@]}" -eq 0 ]; then
-            echo "No EPK Gradle tasks were discovered."
-            exit 1
-          fi
-
-          printf 'EPK tasks: %s\\n' "${EPK_TASKS[@]}"
-          ./gradlew "${EPK_TASKS[@]}" --console=plain --no-daemon
+          # The repository's production asset EPK task lives in the desktop
+          # target because it invokes EPKPackagerMain against game resources.
+          ./gradlew :target_lwjgl_desktop:buildAssetsEPK --console=plain --no-daemon
 
       - name: Compile web client
         shell: bash
