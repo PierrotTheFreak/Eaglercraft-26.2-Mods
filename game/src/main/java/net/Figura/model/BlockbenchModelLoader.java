@@ -6,231 +6,274 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Loads the Generic Model JSON emitted by Blockbench (.bbmodel).
  *
- * Blockbench's outliner can reference cubes by UUID instead of embedding them,
- * so the loader indexes the top-level elements first and then walks the
- * outliner while preserving the model-part hierarchy.
+ * <p>The loader accepts both the pre-5.0 outliner representation, where child
+ * nodes are embedded objects, and the current representation, where the
+ * outliner references UUIDs stored in {@code groups} / {@code elements}.
+ * Cubes are converted into Figura's renderer-neutral cube representation.</p>
  */
 public final class BlockbenchModelLoader {
     private BlockbenchModelLoader() {}
 
     public static void load(byte[] bbmodel, FiguraModel target, String modelName) {
         if (bbmodel == null) throw new IllegalArgumentException("bbmodel == null");
-        JsonObject root = JsonParser.parseString(new String(bbmodel, StandardCharsets.UTF_8)).getAsJsonObject();
-        String name = modelName == null || modelName.isBlank() ? "model" : modelName;
+        if (target == null) throw new IllegalArgumentException("target == null");
 
-        TextureInfo texture = readTextureInfo(root);
-        Map<String, JsonObject> elements = indexElements(root);
+        JsonObject root = JsonParser.parseString(
+                new String(bbmodel, StandardCharsets.UTF_8)).getAsJsonObject();
+
+        String name = modelName == null || modelName.isBlank() ? "model" : modelName;
         FiguraModelPart modelRoot = target.createPart(unique(target, name), "root");
+
+        Map<String, JsonObject> nodes = new HashMap<>();
+        Map<String, JsonObject> cubes = new HashMap<>();
+        indexNodes(root.getAsJsonArray("groups"), nodes);
+        indexElements(root.getAsJsonArray("elements"), cubes);
 
         JsonArray outliner = root.getAsJsonArray("outliner");
         if (outliner != null) {
-            parseOutliner(outliner, target, modelRoot.name(), elements, texture, new float[] {0f, 0f, 0f});
+            parseOutliner(outliner, target, modelRoot.name(), nodes, cubes,
+                    new HashSet<>());
+        }
+
+        // Older files can contain elements that are not represented as explicit
+        // outliner objects. Keep those cubes instead of silently dropping them.
+        if (!cubes.isEmpty() && outliner == null) {
+            for (JsonObject cube : cubes.values()) {
+                addCube(modelRoot, cube, textureSize(root, cube));
+            }
         }
     }
 
-    private static Map<String, JsonObject> indexElements(JsonObject root) {
-        Map<String, JsonObject> result = new HashMap<>();
-        JsonArray elements = root.getAsJsonArray("elements");
-        if (elements == null) return result;
-
-        for (JsonElement element : elements) {
+    private static void indexNodes(JsonArray array, Map<String, JsonObject> nodes) {
+        if (array == null) return;
+        for (JsonElement element : array) {
             if (!element.isJsonObject()) continue;
-            JsonObject object = element.getAsJsonObject();
-            if (object.has("uuid")) result.put(object.get("uuid").getAsString(), object);
-            else if (object.has("name")) result.put(object.get("name").getAsString(), object);
+            JsonObject node = element.getAsJsonObject();
+            String uuid = string(node, "uuid", null);
+            if (uuid != null) nodes.put(uuid, node);
         }
-        return result;
+    }
+
+    private static void indexElements(JsonArray array, Map<String, JsonObject> cubes) {
+        if (array == null) return;
+        for (JsonElement element : array) {
+            if (!element.isJsonObject()) continue;
+            JsonObject cube = element.getAsJsonObject();
+            String uuid = string(cube, "uuid", null);
+            if (uuid != null) cubes.put(uuid, cube);
+        }
     }
 
     private static void parseOutliner(
             JsonArray array,
             FiguraModel target,
             String parent,
-            Map<String, JsonObject> elements,
-            TextureInfo texture,
-            float[] parentOrigin
-    ) {
+            Map<String, JsonObject> nodes,
+            Map<String, JsonObject> cubes,
+            Set<String> visited) {
         for (JsonElement element : array) {
             if (element.isJsonPrimitive()) {
-                JsonObject cube = elements.get(element.getAsString());
-                if (cube != null) addCubeNode(target, parent, cube, texture, parentOrigin);
+                String uuid = element.getAsString();
+                if (!visited.add(uuid)) continue;
+
+                JsonObject node = nodes.get(uuid);
+                if (node != null) {
+                    parseNode(node, target, parent, nodes, cubes, visited);
+                } else {
+                    JsonObject cube = cubes.get(uuid);
+                    if (cube != null) addCube(target.part(parent), cube, textureSize(null, cube));
+                }
                 continue;
             }
+
             if (!element.isJsonObject()) continue;
-
-            JsonObject node = element.getAsJsonObject();
-
-            if (node.has("from") && node.has("to")) {
-                addCubeNode(target, parent, node, texture, parentOrigin);
-                continue;
-            }
-
-            String name = node.has("name") ? node.get("name").getAsString() : "part";
-            name = unique(target, name);
-            FiguraModelPart part = target.createPart(name, parent);
-
-            if (node.has("export") && !node.get("export").getAsBoolean()) {
-                part.visible(false);
-            }
-            readTransform(node, part, parentOrigin);
-
-            JsonArray children = node.getAsJsonArray("children");
-            if (children != null) {
-                parseOutliner(children, target, name, elements, texture,
-                    vector(node, "origin", 0f, 0f, 0f));
-            }
+            parseNode(element.getAsJsonObject(), target, parent, nodes, cubes, visited);
         }
     }
 
-    private static void addCubeNode(
+    private static void parseNode(
+            JsonObject node,
             FiguraModel target,
             String parent,
-            JsonObject cube,
-            TextureInfo texture,
-            float[] parentOrigin
-    ) {
-        String baseName = cube.has("name") ? cube.get("name").getAsString() : "cube";
-        String name = unique(target, baseName);
-        FiguraModelPart part = target.createPart(name, parent);
+            Map<String, JsonObject> nodes,
+            Map<String, JsonObject> cubes,
+            Set<String> visited) {
+        String uuid = string(node, "uuid", null);
+        if (uuid != null && !visited.add(uuid)) return;
 
-        if (cube.has("export") && !cube.get("export").getAsBoolean()) {
+        // Some older bbmodels store cube data directly in the outliner.
+        boolean cube = node.has("from") && node.has("to");
+        if (cube) {
+            FiguraModelPart owner = target.part(parent);
+            if (owner != null) addCube(owner, node, textureSize(null, node));
+            return;
+        }
+
+        String name = string(node, "name", "part");
+        String partName = unique(target, name);
+        FiguraModelPart part = target.createPart(partName, parent);
+
+        applyTransform(part, node);
+        if (node.has("export") && !node.get("export").getAsBoolean()) {
             part.visible(false);
         }
 
-        float[] cubeOrigin = vector(cube, "origin", 0f, 0f, 0f);
-        part.position().set(
-            cubeOrigin[0] - parentOrigin[0],
-            cubeOrigin[1] - parentOrigin[1],
-            cubeOrigin[2] - parentOrigin[2]
-        );
+        JsonArray children = node.getAsJsonArray("children");
+        if (children == null) return;
 
-        float[] rotation = vector(cube, "rotation", 0f, 0f, 0f);
-        part.rotation().set(
-            (float) Math.toRadians(rotation[0]),
-            (float) Math.toRadians(rotation[1]),
-            (float) Math.toRadians(rotation[2])
-        );
+        for (JsonElement child : children) {
+            if (child.isJsonPrimitive()) {
+                String childUuid = child.getAsString();
+                if (!visited.add(childUuid)) continue;
 
-        FiguraCube parsed = parseCube(cube, texture, cubeOrigin);
-        if (parsed != null) part.addCube(parsed);
-    }
+                JsonObject childNode = nodes.get(childUuid);
+                if (childNode != null) {
+                    parseNode(childNode, target, partName, nodes, cubes, visited);
+                    continue;
+                }
 
-    private static void readTransform(JsonObject node, FiguraModelPart part, float[] parentOrigin) {
-        float[] origin = vector(node, "origin", 0f, 0f, 0f);
-        float[] rotation = vector(node, "rotation", 0f, 0f, 0f);
-
-        part.position().set(
-            origin[0] - parentOrigin[0],
-            origin[1] - parentOrigin[1],
-            origin[2] - parentOrigin[2]
-        );
-        part.rotation().set(
-            (float) Math.toRadians(rotation[0]),
-            (float) Math.toRadians(rotation[1]),
-            (float) Math.toRadians(rotation[2])
-        );
-
-        if (node.has("scale")) {
-            float[] scale = vector(node, "scale", 1f, 1f, 1f);
-            part.scale().set(scale[0], scale[1], scale[2]);
+                JsonObject childCube = cubes.get(childUuid);
+                if (childCube != null) {
+                    addCube(target.part(partName), childCube, textureSize(null, childCube));
+                }
+            } else if (child.isJsonObject()) {
+                parseNode(child.getAsJsonObject(), target, partName, nodes, cubes, visited);
+            }
         }
     }
 
-    private static FiguraCube parseCube(JsonObject cube, TextureInfo texture, float[] cubeOrigin) {
+    private static void addCube(FiguraModelPart part, JsonObject cube, int[] textureSize) {
+        if (part == null || cube == null) return;
+
         JsonArray from = cube.getAsJsonArray("from");
         JsonArray to = cube.getAsJsonArray("to");
-        if (from == null || to == null || from.size() < 3 || to.size() < 3) return null;
+        if (from == null || to == null || from.size() < 3 || to.size() < 3) return;
 
-        float x1 = from.get(0).getAsFloat();
-        float y1 = from.get(1).getAsFloat();
-        float z1 = from.get(2).getAsFloat();
-        float x2 = to.get(0).getAsFloat();
-        float y2 = to.get(1).getAsFloat();
-        float z2 = to.get(2).getAsFloat();
-
-        float x = Math.min(x1, x2) - cubeOrigin[0];
-        float y = Math.min(y1, y2) - cubeOrigin[1];
-        float z = Math.min(z1, z2) - cubeOrigin[2];
-        float width = Math.abs(x2 - x1);
-        float height = Math.abs(y2 - y1);
-        float depth = Math.abs(z2 - z1);
+        float x = number(from, 0);
+        float y = number(from, 1);
+        float z = number(from, 2);
+        float width = number(to, 0) - x;
+        float height = number(to, 1) - y;
+        float depth = number(to, 2) - z;
 
         int u = 0;
         int v = 0;
-        boolean foundUv = false;
+        JsonArray uv = cube.getAsJsonArray("uv_offset");
+        if (uv != null && uv.size() >= 2) {
+            u = Math.round(number(uv, 0));
+            v = Math.round(number(uv, 1));
+        } else {
+            JsonObject faces = cube.getAsJsonObject("faces");
+            JsonObject north = faces == null ? null : faces.getAsJsonObject("north");
+            JsonArray faceUv = north == null ? null : north.getAsJsonArray("uv");
+            if (faceUv != null && faceUv.size() >= 2) {
+                u = Math.round(number(faceUv, 0));
+                v = Math.round(number(faceUv, 1));
+            }
+        }
 
-        JsonObject faces = cube.getAsJsonObject("faces");
-        if (faces != null) {
-            String[] preferred = {"north", "south", "east", "west", "up", "down"};
-            for (String side : preferred) {
-                JsonObject face = faces.getAsJsonObject(side);
-                if (face == null) continue;
-                JsonArray uv = face.getAsJsonArray("uv");
-                if (uv != null && uv.size() >= 4) {
-                    u = Math.round(uv.get(0).getAsFloat());
-                    v = Math.round(uv.get(1).getAsFloat());
-                    foundUv = true;
-                    break;
+        float grow = number(cube, "inflate", 0.0F);
+        boolean mirror = cube.has("mirror_uv") && cube.get("mirror_uv").getAsBoolean();
+
+        part.addCube(new FiguraCube(
+                x, y, z, width, height, depth,
+                u, v, grow, mirror,
+                textureSize[0], textureSize[1]
+        ));
+    }
+
+    private static void applyTransform(FiguraModelPart part, JsonObject node) {
+        JsonArray origin = node.getAsJsonArray("origin");
+        if (origin != null && origin.size() >= 3) {
+            part.position().set(number(origin, 0), number(origin, 1), number(origin, 2));
+        }
+
+        JsonArray rotation = node.getAsJsonArray("rotation");
+        if (rotation != null && rotation.size() >= 3) {
+            // Blockbench stores degrees; ModelPart/JOML uses radians.
+            part.rotation().set(
+                    (float) Math.toRadians(number(rotation, 0)),
+                    (float) Math.toRadians(number(rotation, 1)),
+                    (float) Math.toRadians(number(rotation, 2))
+            );
+        }
+
+        JsonArray scale = node.getAsJsonArray("scale");
+        if (scale != null && scale.size() >= 3) {
+            part.scale().set(number(scale, 0), number(scale, 1), number(scale, 2));
+        }
+    }
+
+    private static int[] textureSize(JsonObject root, JsonObject cube) {
+        // Generic Model 4.9+ stores texture UV dimensions per texture.
+        // Fall back to the project resolution used by older bbmodels.
+        if (root != null) {
+            JsonArray textures = root.getAsJsonArray("textures");
+            if (textures != null) {
+                for (JsonElement element : textures) {
+                    if (!element.isJsonObject()) continue;
+                    JsonObject texture = element.getAsJsonObject();
+                    int width = integer(texture, "uv_width", 0);
+                    int height = integer(texture, "uv_height", 0);
+                    if (width > 0 && height > 0) return new int[] {width, height};
                 }
             }
-        }
 
-        if (!foundUv && cube.has("uv_offset")) {
-            JsonArray uv = cube.getAsJsonArray("uv_offset");
-            if (uv != null && uv.size() >= 2) {
-                u = Math.round(uv.get(0).getAsFloat());
-                v = Math.round(uv.get(1).getAsFloat());
+            JsonObject resolution = root.getAsJsonObject("resolution");
+            if (resolution != null) {
+                int width = integer(resolution, "width", 64);
+                int height = integer(resolution, "height", 64);
+                return new int[] {Math.max(1, width), Math.max(1, height)};
             }
         }
 
-        boolean mirror = cube.has("mirror") && cube.get("mirror").getAsBoolean();
-        float grow = cube.has("inflate") ? cube.get("inflate").getAsFloat() : 0f;
-        return new FiguraCube(
-            x, y, z, width, height, depth, u, v, grow, mirror,
-            texture.width, texture.height
-        );
-    }
-
-    private static TextureInfo readTextureInfo(JsonObject root) {
-        JsonArray textures = root.getAsJsonArray("textures");
-        if (textures == null || textures.isEmpty()) return new TextureInfo(64, 64);
-
-        int width = 64;
-        int height = 64;
-        for (JsonElement element : textures) {
-            if (!element.isJsonObject()) continue;
-            JsonObject texture = element.getAsJsonObject();
-            if (texture.has("uv_width")) width = Math.max(1, texture.get("uv_width").getAsInt());
-            if (texture.has("uv_height")) height = Math.max(1, texture.get("uv_height").getAsInt());
-            if (texture.has("width")) width = Math.max(1, texture.get("width").getAsInt());
-            if (texture.has("height")) height = Math.max(1, texture.get("height").getAsInt());
-            break;
-        }
-        return new TextureInfo(width, height);
-    }
-
-    private static float[] vector(JsonObject object, String key, float x, float y, float z) {
-        JsonArray array = object.getAsJsonArray(key);
-        if (array == null || array.size() < 3) return new float[] {x, y, z};
-        return new float[] {
-            array.get(0).getAsFloat(),
-            array.get(1).getAsFloat(),
-            array.get(2).getAsFloat()
-        };
+        return new int[] {64, 64};
     }
 
     private static String unique(FiguraModel model, String base) {
-        String safeBase = base == null || base.isBlank() ? "part" : base;
-        String value = safeBase;
+        String clean = base == null || base.isBlank() ? "part" : base;
+        String value = clean;
         int suffix = 2;
-        while (model.part(value) != null) value = safeBase + "_" + suffix++;
+        while (model.part(value) != null) value = clean + "_" + suffix++;
         return value;
     }
 
-    private record TextureInfo(int width, int height) {}
+    private static String string(JsonObject object, String key, String fallback) {
+        if (object == null || !object.has(key)) return fallback;
+        JsonElement value = object.get(key);
+        return value.isJsonPrimitive() ? value.getAsString() : fallback;
+    }
+
+    private static int integer(JsonObject object, String key, int fallback) {
+        if (object == null || !object.has(key)) return fallback;
+        try {
+            return object.get(key).getAsInt();
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static float number(JsonObject object, String key, float fallback) {
+        if (object == null || !object.has(key)) return fallback;
+        try {
+            return object.get(key).getAsFloat();
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static float number(JsonArray array, int index) {
+        try {
+            return array.get(index).getAsFloat();
+        } catch (RuntimeException ignored) {
+            return 0.0F;
+        }
+    }
 }
