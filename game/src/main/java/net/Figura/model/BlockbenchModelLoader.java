@@ -6,7 +6,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -53,7 +52,8 @@ public final class BlockbenchModelLoader {
             FiguraModel target,
             String parent,
             Map<String, JsonObject> elements,
-            TextureInfo texture
+            TextureInfo texture,
+            float[] parentOrigin
     ) {
         for (JsonElement element : array) {
             if (element.isJsonPrimitive()) {
@@ -65,9 +65,8 @@ public final class BlockbenchModelLoader {
 
             JsonObject node = element.getAsJsonObject();
 
-            // Some Blockbench exports embed a cube object directly in the outliner.
             if (node.has("from") && node.has("to")) {
-                addCubeNode(target, parent, node, texture);
+                addCubeNode(target, parent, node, texture, parentOrigin);
                 continue;
             }
 
@@ -82,7 +81,8 @@ public final class BlockbenchModelLoader {
 
             JsonArray children = node.getAsJsonArray("children");
             if (children != null) {
-                parseOutliner(children, target, name, elements, texture, vector(node, "origin", 0f, 0f, 0f));
+                parseOutliner(children, target, name, elements, texture,
+                    vector(node, "origin", 0f, 0f, 0f));
             }
         }
     }
@@ -91,7 +91,8 @@ public final class BlockbenchModelLoader {
             FiguraModel target,
             String parent,
             JsonObject cube,
-            TextureInfo texture
+            TextureInfo texture,
+            float[] parentOrigin
     ) {
         String baseName = cube.has("name") ? cube.get("name").getAsString() : "cube";
         String name = unique(target, baseName);
@@ -100,18 +101,34 @@ public final class BlockbenchModelLoader {
         if (cube.has("export") && !cube.get("export").getAsBoolean()) {
             part.visible(false);
         }
-        readTransform(cube, part);
 
-        FiguraCube parsed = parseCube(cube, texture);
+        float[] cubeOrigin = vector(cube, "origin", 0f, 0f, 0f);
+        part.position().set(
+            cubeOrigin[0] - parentOrigin[0],
+            cubeOrigin[1] - parentOrigin[1],
+            cubeOrigin[2] - parentOrigin[2]
+        );
+
+        float[] rotation = vector(cube, "rotation", 0f, 0f, 0f);
+        part.rotation().set(
+            (float) Math.toRadians(rotation[0]),
+            (float) Math.toRadians(rotation[1]),
+            (float) Math.toRadians(rotation[2])
+        );
+
+        FiguraCube parsed = parseCube(cube, texture, cubeOrigin);
         if (parsed != null) part.addCube(parsed);
     }
 
-    private static void readTransform(JsonObject node, FiguraModelPart part) {
+    private static void readTransform(JsonObject node, FiguraModelPart part, float[] parentOrigin) {
         float[] origin = vector(node, "origin", 0f, 0f, 0f);
         float[] rotation = vector(node, "rotation", 0f, 0f, 0f);
 
-        // Blockbench stores Euler angles in degrees; Minecraft ModelPart uses radians.
-        part.position().set(origin[0] - parentOrigin[0], origin[1] - parentOrigin[1], origin[2] - parentOrigin[2]);
+        part.position().set(
+            origin[0] - parentOrigin[0],
+            origin[1] - parentOrigin[1],
+            origin[2] - parentOrigin[2]
+        );
         part.rotation().set(
             (float) Math.toRadians(rotation[0]),
             (float) Math.toRadians(rotation[1]),
@@ -124,7 +141,7 @@ public final class BlockbenchModelLoader {
         }
     }
 
-    private static FiguraCube parseCube(JsonObject cube, TextureInfo texture, float[] localOrigin) {
+    private static FiguraCube parseCube(JsonObject cube, TextureInfo texture, float[] cubeOrigin) {
         JsonArray from = cube.getAsJsonArray("from");
         JsonArray to = cube.getAsJsonArray("to");
         if (from == null || to == null || from.size() < 3 || to.size() < 3) return null;
@@ -136,9 +153,9 @@ public final class BlockbenchModelLoader {
         float y2 = to.get(1).getAsFloat();
         float z2 = to.get(2).getAsFloat();
 
-        float x = Math.min(x1, x2);
-        float y = Math.min(y1, y2);
-        float z = Math.min(z1, z2);
+        float x = Math.min(x1, x2) - cubeOrigin[0];
+        float y = Math.min(y1, y2) - cubeOrigin[1];
+        float z = Math.min(z1, z2) - cubeOrigin[2];
         float width = Math.abs(x2 - x1);
         float height = Math.abs(y2 - y1);
         float depth = Math.abs(z2 - z1);
@@ -149,9 +166,6 @@ public final class BlockbenchModelLoader {
 
         JsonObject faces = cube.getAsJsonObject("faces");
         if (faces != null) {
-            // Prefer north because it is stable and matches Blockbench's default
-            // box-UV front reference. Other faces are still retained by the same
-            // atlas coordinates through ModelPart's cube renderer.
             String[] preferred = {"north", "south", "east", "west", "up", "down"};
             for (String side : preferred) {
                 JsonObject face = faces.getAsJsonObject(side);
@@ -176,8 +190,10 @@ public final class BlockbenchModelLoader {
 
         boolean mirror = cube.has("mirror") && cube.get("mirror").getAsBoolean();
         float grow = cube.has("inflate") ? cube.get("inflate").getAsFloat() : 0f;
-        return new FiguraCube(x, y, z, width, height, depth, u, v, grow, mirror,
-            texture.width, texture.height);
+        return new FiguraCube(
+            x, y, z, width, height, depth, u, v, grow, mirror,
+            texture.width, texture.height
+        );
     }
 
     private static TextureInfo readTextureInfo(JsonObject root) {
@@ -201,7 +217,11 @@ public final class BlockbenchModelLoader {
     private static float[] vector(JsonObject object, String key, float x, float y, float z) {
         JsonArray array = object.getAsJsonArray(key);
         if (array == null || array.size() < 3) return new float[] {x, y, z};
-        return new float[] {array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat()};
+        return new float[] {
+            array.get(0).getAsFloat(),
+            array.get(1).getAsFloat(),
+            array.get(2).getAsFloat()
+        };
     }
 
     private static String unique(FiguraModel model, String base) {
