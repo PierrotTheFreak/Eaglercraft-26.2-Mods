@@ -25,7 +25,7 @@ public final class FiguraPlayerLayer extends RenderLayer<AvatarRenderState, Play
     @Override
     public void submit(PoseStack poseStack, SubmitNodeCollector collector, int lightCoords,
                        AvatarRenderState state, float limbAngle, float limbDistance) {
-        Avatar avatar = avatars.get(state.idAsUuid());
+        Avatar avatar = avatars.get(state.figuraOwner);
         if (avatar == null || avatar.state() != AvatarState.LOADED) return;
         var part = FiguraModelPartAdapter.bake(avatar.model());
         collector.submitModelPart(part, poseStack, RenderTypes.entityTranslucent(state.skin.body().texturePath()),
