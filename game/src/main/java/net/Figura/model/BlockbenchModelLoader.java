@@ -30,7 +30,7 @@ public final class BlockbenchModelLoader {
 
         JsonArray outliner = root.getAsJsonArray("outliner");
         if (outliner != null) {
-            parseOutliner(outliner, target, modelRoot.name(), elements, texture);
+            parseOutliner(outliner, target, modelRoot.name(), elements, texture, new float[] {0f, 0f, 0f});
         }
     }
 
@@ -58,7 +58,7 @@ public final class BlockbenchModelLoader {
         for (JsonElement element : array) {
             if (element.isJsonPrimitive()) {
                 JsonObject cube = elements.get(element.getAsString());
-                if (cube != null) addCubeNode(target, parent, cube, texture);
+                if (cube != null) addCubeNode(target, parent, cube, texture, parentOrigin);
                 continue;
             }
             if (!element.isJsonObject()) continue;
@@ -78,11 +78,11 @@ public final class BlockbenchModelLoader {
             if (node.has("export") && !node.get("export").getAsBoolean()) {
                 part.visible(false);
             }
-            readTransform(node, part);
+            readTransform(node, part, parentOrigin);
 
             JsonArray children = node.getAsJsonArray("children");
             if (children != null) {
-                parseOutliner(children, target, name, elements, texture);
+                parseOutliner(children, target, name, elements, texture, vector(node, "origin", 0f, 0f, 0f));
             }
         }
     }
@@ -111,7 +111,7 @@ public final class BlockbenchModelLoader {
         float[] rotation = vector(node, "rotation", 0f, 0f, 0f);
 
         // Blockbench stores Euler angles in degrees; Minecraft ModelPart uses radians.
-        part.position().set(origin[0], origin[1], origin[2]);
+        part.position().set(origin[0] - parentOrigin[0], origin[1] - parentOrigin[1], origin[2] - parentOrigin[2]);
         part.rotation().set(
             (float) Math.toRadians(rotation[0]),
             (float) Math.toRadians(rotation[1]),
@@ -124,7 +124,7 @@ public final class BlockbenchModelLoader {
         }
     }
 
-    private static FiguraCube parseCube(JsonObject cube, TextureInfo texture) {
+    private static FiguraCube parseCube(JsonObject cube, TextureInfo texture, float[] localOrigin) {
         JsonArray from = cube.getAsJsonArray("from");
         JsonArray to = cube.getAsJsonArray("to");
         if (from == null || to == null || from.size() < 3 || to.size() < 3) return null;
