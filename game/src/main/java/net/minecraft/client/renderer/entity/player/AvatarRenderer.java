@@ -2,6 +2,8 @@ package net.minecraft.client.renderer.entity.player;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import net.Figura.render.FiguraPlayerLayer;
+import net.Figura.runtime.FiguraRuntime;
 import net.minecraft.client.entity.ClientAvatarEntity;
 import net.minecraft.client.entity.ClientAvatarState;
 import net.minecraft.client.model.HumanoidModel;
@@ -66,6 +68,7 @@ public class AvatarRenderer<AvatarlikeEntity extends Avatar & ClientAvatarEntity
       this.addLayer(new ParrotOnShoulderLayer(this, context.getModelSet()));
       this.addLayer(new SpinAttackEffectLayer(this, context.getModelSet()));
       this.addLayer(new BeeStingerLayer<>(this, context));
+      this.addLayer(new FiguraPlayerLayer(this, FiguraRuntime.get().avatars()));
    }
 
    protected boolean shouldRenderLayers(final AvatarRenderState state) {
