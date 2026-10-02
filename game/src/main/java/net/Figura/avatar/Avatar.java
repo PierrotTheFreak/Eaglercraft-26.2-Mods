@@ -1,5 +1,7 @@
 package net.Figura.avatar;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.UUID;
 import net.Figura.animation.AnimationPlayer;
 import net.Figura.lua.FiguraLuaRuntime;
@@ -12,22 +14,26 @@ public final class Avatar {
     private final FiguraModel model;
     private final PermissionSet permissions;
     private final AvatarMetadata metadata;
+    private final Map<String, byte[]> resources;
     private final AnimationPlayer animations = new AnimationPlayer();
     private final FiguraLuaRuntime lua = new FiguraLuaRuntime();
     private AvatarState state = AvatarState.UNLOADED;
     private int tick;
 
-    public Avatar(UUID owner, AvatarMetadata metadata, FiguraModel model, PermissionSet permissions) {
+    public Avatar(UUID owner, AvatarMetadata metadata, FiguraModel model,
+                  PermissionSet permissions, Map<String, byte[]> resources) {
         this.owner = owner;
         this.metadata = metadata;
         this.model = model;
         this.permissions = permissions;
+        this.resources = resources == null ? Map.of() : Map.copyOf(resources);
     }
 
     public UUID owner() { return owner; }
     public FiguraModel model() { return model; }
     public PermissionSet permissions() { return permissions; }
     public AvatarMetadata metadata() { return metadata; }
+    public Map<String, byte[]> resources() { return Collections.unmodifiableMap(resources); }
     public AnimationPlayer animations() { return animations; }
     public FiguraLuaRuntime lua() { return lua; }
     public AvatarState state() { return state; }
