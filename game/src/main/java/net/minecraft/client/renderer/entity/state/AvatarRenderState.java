@@ -3,6 +3,7 @@ package net.minecraft.client.renderer.entity.state;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.util.Mth;
+import java.util.UUID;
 import net.minecraft.world.entity.animal.parrot.Parrot;
 import net.minecraft.world.entity.player.PlayerSkin;
 import org.jspecify.annotations.Nullable;
@@ -28,6 +29,7 @@ public class AvatarRenderState extends HumanoidRenderState {
    public Parrot.@Nullable Variant parrotOnLeftShoulder;
    public Parrot.@Nullable Variant parrotOnRightShoulder;
    public int id;
+   public UUID figuraOwner;
    public boolean showExtraEars = false;
    public final ItemStackRenderState heldOnHead = new ItemStackRenderState();
 
