@@ -1,6 +1,7 @@
 name: Compile Java
 
 on:
+  push:
   workflow_dispatch:
 
 permissions:
