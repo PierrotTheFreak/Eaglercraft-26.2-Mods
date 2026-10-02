@@ -9,6 +9,7 @@ import org.joml.Vector3f;
 public final class FiguraModelPart {
     private final String name;
     private final List<FiguraModelPart> children = new ArrayList<>();
+    private final List<FiguraCube> cubes = new ArrayList<>();
     private final Vector3f position = new Vector3f();
     private final Vector3f rotation = new Vector3f();
     private final Vector3f scale = new Vector3f(1f, 1f, 1f);
@@ -21,6 +22,8 @@ public final class FiguraModelPart {
 
     public String name() { return name; }
     public List<FiguraModelPart> children() { return Collections.unmodifiableList(children); }
+    public List<FiguraCube> cubes() { return Collections.unmodifiableList(cubes); }
+    public FiguraModelPart addCube(FiguraCube cube) { cubes.add(cube); return this; }
     public Vector3f position() { return position; }
     public Vector3f rotation() { return rotation; }
     public Vector3f scale() { return scale; }
